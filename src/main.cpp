@@ -5,10 +5,26 @@
 #include <time.h>
 #include "credentials.h"
 
-//define ssid and password from wifi.h file located in the include folder
+// #define JOYSTICK // Enable joystick code
 
-const char* ssid = SSID;
-const char* password = PASSWORD;
+#ifdef JOYSTICK
+#define JOYSTICK_X_PIN 34 // ADC pin for X-axis
+#define JOYSTICK_Y_PIN 35 // ADC pin for Y-axis
+#define JOYSTICK_NEUTRAL 2048 // Approx. mid-point of ADC (for 12-bit ADC)
+#define ALTITUDE_RATE 0.1 // Rate of change in altitude per unit deviation
+#define COURSE_RATE 0.1 // Rate of change in course per unit deviation
+
+int joystickXValue = 0;
+int joystickYValue = 0;
+float currentCourse = 90.0; // Starting course in degrees (east)
+#else
+#define JOYSTICK_X_PIN 0
+#define JOYSTICK_Y_PIN 1
+#endif
+
+//define ssid and password from wifi.h file located in the include folder
+// const char* ssid = SSID;
+// const char* password = PASSWORD;
 
 const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = 0;
@@ -26,8 +42,8 @@ String sentence;
 String calculateChecksum(String sentence);
 void handleUbloxQuery();
 
-// const char* ssid = SSID;
-// const char* password = PASSWORD
+const char* ssid = "arse-5G";
+const char* password = "Privet2999";
 
 // Define two Serial devices mapped to the two internal UARTs
 HardwareSerial MySerial0(0);
@@ -44,8 +60,6 @@ float altitude = 100.0; // Altitude in meters
 
 int baudRate = 9600; // Default baud rate
 bool ubloxQuery = false;
-
-const int ppsPin = 2; // Define the PPS pin (change this to the pin you want to use)
 
 AsyncWebServer server(80);
 
@@ -76,32 +90,59 @@ void setup() {
         return;
     }
 
-    // Set the PPS pin as an output
-    pinMode(ppsPin, OUTPUT);
-    digitalWrite(ppsPin, LOW);
+      // Configure ADC pins for joystick
+    #ifdef JOYSTICK
+    pinMode(JOYSTICK_X_PIN, INPUT_PULLUP);
+    pinMode(JOYSTICK_Y_PIN, INPUT_PULLUP);
+    #endif
 
     // Set up the web server
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         String html = "<html><body>"
                       "<h1>GPS Simulation Parameters</h1>"
                       "<form action='/set_parameters' method='POST'>"
-                      "Latitude:     <input type='text' name='lat' value='" + String(currentLat) + "'><br>"
-                      "Longitude:    <input type='text' name='lon' value='" + String(currentLon) + "'><br>"
+                      "Latitude: <input type='text' name='lat' value='" + String(currentLat) + "'><br>"
+                      "Longitude: <input type='text' name='lon' value='" + String(currentLon) + "'><br>"
                       "Speed (km/h): <input type='text' name='speed' value='" + String(speed_kmh) + "'><br>"
-                      "courseDeg:    <input type='text' name='courseDeg' value='" + String(courseDeg) + "'><br><br>"
+                      "Baud Rate: <input type='text' name='baud' value='" + String(baudRate) + "'><br>"
                       "<input type='submit' value='Set Parameters'>"
                       "</form></body></html>";
         request->send(200, "text/html", html);
     });
 
     server.on("/set_parameters", HTTP_POST, [](AsyncWebServerRequest *request){
-        if (request->hasParam("lat", true) && request->hasParam("lon", true) && request->hasParam("speed", true)) {
+        if (request->hasParam("lat", true) && request->hasParam("lon", true) && request->hasParam("speed", true) && request->hasParam("baud", true)) {
             currentLat = request->getParam("lat", true)->value().toFloat();
             currentLon = request->getParam("lon", true)->value().toFloat();
             speed_kmh = request->getParam("speed", true)->value().toFloat();
-            courseDeg = request->getParam("courseDeg", true)->value().toInt();
+            baudRate = request->getParam("baud", true)->value().toInt();
+            // Update the baud rate of MySerial1
+            MySerial1.updateBaudRate(baudRate);
         }
         request->send(200, "text/html", "Parameters updated! <a href='/'>Go Back</a>");
+    });
+
+    // Set up the web server for settings
+    server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request){
+        String html = "<html><body>"
+                      "<h1>GPS Simulator Settings</h1>"
+                      "<form action='/set_joystick' method='POST'>"
+                      "<h3>Joystick Settings:</h3>"
+                      "<input type='checkbox' name='enable_joystick' value='1' checked> Enable Joystick<br>"
+                      "Joystick X Pin: <input type='text' name='joystick_x_pin' value='" + String(JOYSTICK_X_PIN) + "'><br>"
+                      "Joystick Y Pin: <input type='text' name='joystick_y_pin' value='" + String(JOYSTICK_Y_PIN) + "'><br>"
+                      "<input type='submit' value='Save Settings'>"
+                      "</form></body></html>";
+        request->send(200, "text/html", html);
+    });
+
+    server.on("/set_joystick", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (request->hasParam("enable_joystick", true)) {
+            #define JOYSTICK
+        } else {
+            #undef JOYSTICK
+        }
+        request->send(200, "text/html", "Settings updated! <a href='/settings'>Go Back</a>");
     });
 
     server.begin();
@@ -151,21 +192,38 @@ void loop() {
 }
 
 void updatePosition(int courseDeg) {
-    // Calculate the distance travelled in kilometers
     float distance_km = (speed_kmh / 3600.0) * (interval / 1000.0);
-    
-    // Convert the course direction from degrees to radians
-    float courseRad = radians(courseDeg);
-
-    // Calculate changes in latitude and longitude based on the course direction
-    float deltaLat = distance_km * cos(courseRad) / 111.32; // Approximation: 1 degree of latitude is ~111.32 km
-    float deltaLon = distance_km * sin(courseRad) / (111.32 * cos(radians(currentLat))); // Longitude distance depends on latitude
-
-    // Update current latitude and longitude
-    currentLat += deltaLat;
+    float deltaLon = distance_km / (111.32 * cos(radians(currentLat)));
     currentLon += deltaLon;
 
+    #ifdef JOYSTICK
+    // Read joystick values
+    joystickXValue = analogRead(JOYSTICK_X_PIN);
+    joystickYValue = analogRead(JOYSTICK_Y_PIN);
+
+    // Calculate changes based on joystick position
+    float altitudeChange = (joystickXValue - JOYSTICK_NEUTRAL) * ALTITUDE_RATE;
+    float courseChange = (joystickYValue - JOYSTICK_NEUTRAL) * COURSE_RATE;
+
+    altitude += altitudeChange;
+    currentCourse += courseChange;
+
+    // Ensure course is within 0 to 360 degrees
+    if (currentCourse >= 360) currentCourse -= 360;
+    if (currentCourse < 0) currentCourse += 360;
+
+    // Debug output
+    Serial.print("Joystick X: ");
+    Serial.print(joystickXValue);
+    Serial.print(" Joystick Y: ");
+    Serial.println(joystickYValue);
+    Serial.print("Altitude: ");
+    Serial.println(altitude);
+    Serial.print("Course: ");
+    Serial.println(currentCourse);
+    #endif
 }
+
 
 String generateGPGGASentence(float lat, float lon, float alt, const char* timeStr) {
     char nmea[120];
