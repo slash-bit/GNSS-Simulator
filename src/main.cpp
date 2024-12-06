@@ -8,8 +8,8 @@
 #define JOYSTICK // Enable joystick code
 
 #ifdef JOYSTICK
-#define JOYSTICK_X_PIN 0 // ADC pin for X-axis
-#define JOYSTICK_Y_PIN 1 // ADC pin for Y-axis
+#define JOYSTICK_X_PIN 2 // ADC pin for X-axis
+#define JOYSTICK_Y_PIN 3 // ADC pin for Y-axis
 #define JOYSTICK_NEUTRAL 2048 // Apsprox. mid-point of ADC (for 12-bit ADC)
 #define ALTITUDE_RATE 0.1 // Rate of change in altitude per unit deviation
 #define COURSE_RATE 0.1 // Rate of change in course per unit deviation
@@ -92,35 +92,10 @@ void setup() {
 
       // Configure ADC pins for joystick
     #ifdef JOYSTICK
-    pinMode(JOYSTICK_X_PIN, INPUT_PULLUP);
-    pinMode(JOYSTICK_Y_PIN, INPUT_PULLUP);
+    pinMode(JOYSTICK_X_PIN, INPUT);
+    pinMode(JOYSTICK_Y_PIN, INPUT);
     #endif
 
-    // Set up the web server
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-        String html = "<html><body>"
-                      "<h1>GPS Simulation Parameters</h1>"
-                      "<form action='/set_parameters' method='POST'>"
-                      "Latitude: <input type='text' name='lat' value='" + String(currentLat) + "'><br>"
-                      "Longitude: <input type='text' name='lon' value='" + String(currentLon) + "'><br>"
-                      "Speed (km/h): <input type='text' name='speed' value='" + String(speed_kmh) + "'><br>"
-                      "Baud Rate: <input type='text' name='baud' value='" + String(baudRate) + "'><br>"
-                      "<input type='submit' value='Set Parameters'>"
-                      "</form></body></html>";
-        request->send(200, "text/html", html);
-    });
-
-    server.on("/set_parameters", HTTP_POST, [](AsyncWebServerRequest *request){
-        if (request->hasParam("lat", true) && request->hasParam("lon", true) && request->hasParam("speed", true) && request->hasParam("baud", true)) {
-            currentLat = request->getParam("lat", true)->value().toFloat();
-            currentLon = request->getParam("lon", true)->value().toFloat();
-            speed_kmh = request->getParam("speed", true)->value().toFloat();
-            baudRate = request->getParam("baud", true)->value().toInt();
-            // Update the baud rate of MySerial1
-            MySerial1.updateBaudRate(baudRate);
-        }
-        request->send(200, "text/html", "Parameters updated! <a href='/'>Go Back</a>");
-    });
 
     // Set up the web server for settings
     server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request){
@@ -140,7 +115,7 @@ void setup() {
         if (request->hasParam("enable_joystick", true)) {
             #define JOYSTICK
         } else {
-            #undef JOYSTICK
+            #define JOYSTICK
         }
         request->send(200, "text/html", "Settings updated! <a href='/settings'>Go Back</a>");
     });
