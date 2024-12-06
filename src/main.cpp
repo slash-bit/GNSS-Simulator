@@ -5,12 +5,12 @@
 #include <time.h>
 #include "credentials.h"
 
-// #define JOYSTICK // Enable joystick code
+#define JOYSTICK // Enable joystick code
 
 #ifdef JOYSTICK
-#define JOYSTICK_X_PIN 34 // ADC pin for X-axis
-#define JOYSTICK_Y_PIN 35 // ADC pin for Y-axis
-#define JOYSTICK_NEUTRAL 2048 // Approx. mid-point of ADC (for 12-bit ADC)
+#define JOYSTICK_X_PIN 0 // ADC pin for X-axis
+#define JOYSTICK_Y_PIN 1 // ADC pin for Y-axis
+#define JOYSTICK_NEUTRAL 2048 // Apsprox. mid-point of ADC (for 12-bit ADC)
 #define ALTITUDE_RATE 0.1 // Rate of change in altitude per unit deviation
 #define COURSE_RATE 0.1 // Rate of change in course per unit deviation
 
@@ -46,7 +46,7 @@ const char* ssid = "arse-5G";
 const char* password = "Privet2999";
 
 // Define two Serial devices mapped to the two internal UARTs
-HardwareSerial MySerial0(0);
+// HardwareSerial MySerial0(0);
 HardwareSerial MySerial1(1);
 
 const unsigned long interval = 1000; // Interval in milliseconds for updates
