@@ -21,6 +21,7 @@ int JOYSTICK_MIN_Y = 0; // Minimum ADC value for Y-axis
 
 int joystickXValue = 0;
 int joystickYValue = 0;
+float heading = 90.0; // Aircraft heading in degrees
 float currentCourse = 90.0; // Starting course in degrees (east)
 #else
 #define JOYSTICK_X_PIN 0
@@ -62,6 +63,9 @@ float currentLon = 0.125;
 float speed_kmh = 45.0; // Speed in km/h
 int courseDeg = 90; // Direction in degrees
 float altitude = 100.0; // Altitude in meters
+float windDirection = 0.0; // Wind direction in degrees
+float windStrength = 0.0; // Wind strength in km/h
+
 
 int baudRate = 9600; // Default baud rate
 bool ubloxQuery = false;
@@ -102,67 +106,70 @@ void setup() {
     #endif
 
 
-     // Set up the web server
-    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-        String html = "<html><body>"
-                      "<h1>GPS Simulator Settings</h1>"
-                      "<form action='/set_parameters' method='POST'>"
-                      "<h3>GPS Simulation Parameters</h3>"
-                      "Latitude: <input type='text' name='lat' value='" + String(currentLat) + "'><br>"
-                      "Longitude: <input type='text' name='lon' value='" + String(currentLon) + "'><br>"
-                      "Speed (km/h): <input type='text' name='speed' value='" + String(speed_kmh) + "'><br>"
-                      "Course (degrees): <input type='text' name='course' value='" + String(currentCourse) + "'><br>"
-                      "<input type='submit' value='Set Parameters'>"
-                      "</form>"
-                      "<hr>"
-                      "<form action='/set_joystick' method='POST'>"
-                      "<h3>Joystick Settings:</h3>"
-                      "<input type='checkbox' name='enable_joystick' value='1' checked> Enable Joystick<br>"
-                      "Joystick X Pin: <input type='text' name='joystick_x_pin' value='" + String(JOYSTICK_X_PIN) + "'><br>"
-                      "Joystick Y Pin: <input type='text' name='joystick_y_pin' value='" + String(JOYSTICK_Y_PIN) + "'><br>"
-                      "Joystick X Neutral: <input type='number' name='joystick_x_neutral' value='" + String(JOYSTICK_NEUTRAL_X) + "'><br>"
-                      "Joystick Y Neutral: <input type='number' name='joystick_y_neutral' value='" + String(JOYSTICK_NEUTRAL_Y) + "'><br>"
-                      "Joystick X Max: <input type='number' name='joystick_x_max' value='" + String(JOYSTICK_MAX_X) + "'><br>"
-                      "Joystick X Min: <input type='number' name='joystick_x_min' value='" + String(JOYSTICK_MIN_X) + "'><br>"
-                      "Joystick Y Max: <input type='number' name='joystick_y_max' value='" + String(JOYSTICK_MAX_Y) + "'><br>"
-                      "Joystick Y Min: <input type='number' name='joystick_y_min' value='" + String(JOYSTICK_MIN_Y) + "'><br>"
-                      "<input type='submit' value='Save Settings'>"
-                      "</form></body></html>";
-        request->send(200, "text/html", html);
-    });
+ 	server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    String html = "<html><body>"
+                  "<h1>GPS Simulator Settings</h1>"
+                  "<form action='/set_parameters' method='POST'>"
+                  "<h3>GPS Simulation Parameters</h3>"
+                  "Latitude: <input type='text' name='lat' value='" + String(currentLat) + "'><br>"
+                  "Longitude: <input type='text' name='lon' value='" + String(currentLon) + "'><br>"
+                  "Speed (km/h): <input type='text' name='speed' value='" + String(speed_kmh) + "'><br>"
+                  "Course (degrees): <input type='text' name='course' value='" + String(currentCourse) + "'><br>"
+                  "Wind Direction (degrees): <input type='text' name='wind_dir' value='" + String(windDirection) + "'><br>"
+                  "Wind Strength (km/h): <input type='text' name='wind_str' value='" + String(windStrength) + "'><br>"
+                  "<input type='submit' value='Set Parameters'>"
+                  "</form>"
+                  "<hr>"
+                  "<form action='/set_joystick' method='POST'>"
+                  "<h3>Joystick Settings:</h3>"
+                  "<input type='checkbox' name='enable_joystick' value='1' checked> Enable Joystick<br>"
+                  "Joystick X Pin: <input type='text' name='joystick_x_pin' value='" + String(JOYSTICK_X_PIN) + "'><br>"
+                  "Joystick Y Pin: <input type='text' name='joystick_y_pin' value='" + String(JOYSTICK_Y_PIN) + "'><br>"
+                  "Joystick X Neutral: <input type='number' name='joystick_x_neutral' value='" + String(JOYSTICK_NEUTRAL_X) + "'><br>"
+                  "Joystick Y Neutral: <input type='number' name='joystick_y_neutral' value='" + String(JOYSTICK_NEUTRAL_Y) + "'><br>"
+                  "Joystick X Max: <input type='number' name='joystick_x_max' value='" + String(JOYSTICK_MAX_X) + "'><br>"
+                  "Joystick X Min: <input type='number' name='joystick_x_min' value='" + String(JOYSTICK_MIN_X) + "'><br>"
+                  "Joystick Y Max: <input type='number' name='joystick_y_max' value='" + String(JOYSTICK_MAX_Y) + "'><br>"
+                  "Joystick Y Min: <input type='number' name='joystick_y_min' value='" + String(JOYSTICK_MIN_Y) + "'><br>"
+                  "<input type='submit' value='Save Settings'>"
+                  "</form></body></html>";
+    request->send(200, "text/html", html);
+});
 
-    server.on("/set_parameters", HTTP_POST, [](AsyncWebServerRequest *request){
-        if (request->hasParam("lat", true) && request->hasParam("lon", true) && request->hasParam("speed", true) && request->hasParam("course", true)) {
-            currentLat = request->getParam("lat", true)->value().toFloat();
-            currentLon = request->getParam("lon", true)->value().toFloat();
-            speed_kmh = request->getParam("speed", true)->value().toFloat();
-            currentCourse = request->getParam("course", true)->value().toFloat();
-        }
-        request->send(200, "text/html", "Parameters updated! <a href='/'>Go Back</a>");
-    });
+server.on("/set_parameters", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (request->hasParam("lat", true) && request->hasParam("lon", true) && request->hasParam("speed", true) && request->hasParam("course", true) && request->hasParam("wind_dir", true) && request->hasParam("wind_str", true)) {
+        currentLat = request->getParam("lat", true)->value().toFloat();
+        currentLon = request->getParam("lon", true)->value().toFloat();
+        speed_kmh = request->getParam("speed", true)->value().toFloat();
+        currentCourse = request->getParam("course", true)->value().toFloat();
+        windDirection = request->getParam("wind_dir", true)->value().toFloat();
+        windStrength = request->getParam("wind_str", true)->value().toFloat();
+    }
+    request->send(200, "text/html", "Parameters updated! <a href='/'>Go Back</a>");
+});
 
-    server.on("/set_joystick", HTTP_POST, [](AsyncWebServerRequest *request){
-        if (request->hasParam("joystick_x_neutral", true) && request->hasParam("joystick_y_neutral", true) && 
-            request->hasParam("joystick_x_max", true) && request->hasParam("joystick_x_min", true) &&
-            request->hasParam("joystick_y_max", true) && request->hasParam("joystick_y_min", true)) {
+server.on("/set_joystick", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (request->hasParam("joystick_x_neutral", true) && request->hasParam("joystick_y_neutral", true) && 
+        request->hasParam("joystick_x_max", true) && request->hasParam("joystick_x_min", true) &&
+        request->hasParam("joystick_y_max", true) && request->hasParam("joystick_y_min", true)) {
 
-            JOYSTICK_NEUTRAL_X = request->getParam("joystick_x_neutral", true)->value().toInt();
-            JOYSTICK_NEUTRAL_Y = request->getParam("joystick_y_neutral", true)->value().toInt();
-            JOYSTICK_MAX_X = request->getParam("joystick_x_max", true)->value().toInt();
-            JOYSTICK_MIN_X = request->getParam("joystick_x_min", true)->value().toInt();
-            JOYSTICK_MAX_Y = request->getParam("joystick_y_max", true)->value().toInt();
-            JOYSTICK_MIN_Y = request->getParam("joystick_y_min", true)->value().toInt();
-        }
-        if (request->hasParam("enable_joystick", true)) {
-            // Enable joystick
-        } else {
-            #undef JOYSTICK
-        }
-        request->send(200, "text/html", "Settings updated! <a href='/'>Go Back</a>");
-    });
+        JOYSTICK_NEUTRAL_X = request->getParam("joystick_x_neutral", true)->value().toInt();
+        JOYSTICK_NEUTRAL_Y = request->getParam("joystick_y_neutral", true)->value().toInt();
+        JOYSTICK_MAX_X = request->getParam("joystick_x_max", true)->value().toInt();
+        JOYSTICK_MIN_X = request->getParam("joystick_x_min", true)->value().toInt();
+        JOYSTICK_MAX_Y = request->getParam("joystick_y_max", true)->value().toInt();
+        JOYSTICK_MIN_Y = request->getParam("joystick_y_min", true)->value().toInt();
+    }
+    if (request->hasParam("enable_joystick", true)) {
+        #define JOYSTICK
+    } else {
+        #undef JOYSTICK
+    }
+    request->send(200, "text/html", "Settings updated! <a href='/'>Go Back</a>");
+});
 
-    server.begin();
-    Serial.println("Server started");
+server.begin();
+Serial.println("Server started");
 }
 
 void loop() {
@@ -209,11 +216,26 @@ void loop() {
 
 void updatePosition(int courseDeg) {
     float distance_km = (speed_kmh / 3600.0) * (interval / 1000.0); // Distance traveled in km
-    float courseRad = radians(currentCourse); // Convert course to radians
+    float headingRad = radians(heading); // Convert heading to radians
+    float windRad = radians(windDirection); // Convert wind direction to radians
 
-    // Calculate changes in latitude and longitude based on the current course
-    float deltaLat = distance_km * cos(courseRad) / 111.32; // Approx. 1 degree of latitude = 111.32 km
-    float deltaLon = distance_km * sin(courseRad) / (111.32 * cos(radians(currentLat))); // Longitude distance depends on latitude
+    // Calculate effective components due to wind and heading
+    float effectiveSpeedX = (speed_kmh * cos(headingRad)) + (windStrength * cos(windRad));
+    float effectiveSpeedY = (speed_kmh * sin(headingRad)) + (windStrength * sin(windRad));
+    float effectiveSpeed = sqrt(sq(effectiveSpeedX) + sq(effectiveSpeedY));
+
+    // Calculate the effective course considering wind
+    float effectiveCourseRad = atan2(effectiveSpeedY, effectiveSpeedX);
+    float effectiveCourse = degrees(effectiveCourseRad);
+
+    // Convert effective course back to degrees
+    currentCourse = effectiveCourse;
+    if (currentCourse >= 360) currentCourse -= 360;
+    if (currentCourse < 0) currentCourse += 360;
+
+    // Calculate changes in latitude and longitude based on the effective course
+    float deltaLat = (effectiveSpeed / 3600.0) * (interval / 1000.0) * cos(effectiveCourseRad) / 111.32; // Approx. 1 degree of latitude = 111.32 km
+    float deltaLon = (effectiveSpeed / 3600.0) * (interval / 1000.0) * sin(effectiveCourseRad) / (111.32 * cos(radians(currentLat))); // Longitude distance depends on latitude
 
     currentLat += deltaLat;
     currentLon += deltaLon;
@@ -229,7 +251,7 @@ void updatePosition(int courseDeg) {
 
     // Calculate changes based on joystick position
     float altitudeChange = normalizedX * ALTITUDE_RATE;
-    float courseChange = normalizedY * COURSE_RATE;
+    float headingChange = normalizedY * COURSE_RATE;
 
         // If joystick is in the neutral position for X-axis (Acsend rate), set altitude change to 0
     if (abs(joystickXValue - JOYSTICK_NEUTRAL_X) < 60) { // 60 is a small threshold for neutral position
@@ -238,15 +260,20 @@ void updatePosition(int courseDeg) {
 
             // If joystick is in the neutral position for Y-axis (Turn rate), set course change to 0
     if (abs(joystickYValue - JOYSTICK_NEUTRAL_Y) < 15) { // 15 is a small threshold for neutral position
-        courseChange = 0;
+        headingChange = 0;
     }
 
     altitude += altitudeChange;
-    currentCourse += courseChange;
+    heading += headingChange;
 
     // Ensure course is within 0 to 360 degrees
     if (currentCourse >= 360) currentCourse -= 360;
     if (currentCourse < 0) currentCourse += 360;
+
+        // Ensure heading is within 0 to 360 degrees
+    if (heading >= 360) heading -= 360;
+    if (heading < 0) heading += 360;
+
 #ifdef DEBUG_JOYSTICK
     // Joystick Debug output
     Serial.print("Joystick X: ");
@@ -257,11 +284,9 @@ void updatePosition(int courseDeg) {
     Serial.print(normalizedX);
     Serial.print(" Y Norm: ");
     Serial.println(normalizedY);
-    Serial.print("Altitude change: ");
-    Serial.print(altitudeChange);
-    Serial.print(" Course change: ");
-    Serial.println(courseChange);
     Serial.print("Altitude: ");
+    Serial.print("Heading: ");
+    Serial.println(heading);
     Serial.println(altitude);
     Serial.print("Course: ");
     Serial.println(currentCourse);
