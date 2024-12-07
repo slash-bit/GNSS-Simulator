@@ -6,13 +6,18 @@
 #include "credentials.h"
 
 #define JOYSTICK // Enable joystick code
-
+#define DEBUG_JOYSTICK // Enable debug output for joystick
 #ifdef JOYSTICK
 #define JOYSTICK_X_PIN 2 // ADC pin for X-axis
 #define JOYSTICK_Y_PIN 3 // ADC pin for Y-axis
-#define JOYSTICK_NEUTRAL 2048 // Apsprox. mid-point of ADC (for 12-bit ADC)
-#define ALTITUDE_RATE 0.1 // Rate of change in altitude per unit deviation
-#define COURSE_RATE 0.1 // Rate of change in course per unit deviation
+int JOYSTICK_NEUTRAL_X = 1935; // Approx. mid-point of ADC for X-axis
+int JOYSTICK_NEUTRAL_Y = 2125; // Approx. mid-point of ADC for Y-axis
+int JOYSTICK_MAX_X = 4095; // Maximum ADC value for X-axis
+int JOYSTICK_MIN_X = 0; // Minimum ADC value for X-axis
+int JOYSTICK_MAX_Y = 4095; // Maximum ADC value for Y-axis
+int JOYSTICK_MIN_Y = 0; // Minimum ADC value for Y-axis
+#define ALTITUDE_RATE 10.0 // Rate of change in altitude per unit deviation
+#define COURSE_RATE 20.0 // Rate of change in course per unit deviation
 
 int joystickXValue = 0;
 int joystickYValue = 0;
@@ -54,7 +59,7 @@ unsigned long previousMillis = 0;
 
 float currentLat = 51.8727;
 float currentLon = 0.125;
-float speed_kmh = 30.0; // Speed in km/h
+float speed_kmh = 45.0; // Speed in km/h
 int courseDeg = 90; // Direction in degrees
 float altitude = 100.0; // Altitude in meters
 
@@ -97,27 +102,63 @@ void setup() {
     #endif
 
 
-    // Set up the web server for settings
-    server.on("/settings", HTTP_GET, [](AsyncWebServerRequest *request){
+     // Set up the web server
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
         String html = "<html><body>"
                       "<h1>GPS Simulator Settings</h1>"
+                      "<form action='/set_parameters' method='POST'>"
+                      "<h3>GPS Simulation Parameters</h3>"
+                      "Latitude: <input type='text' name='lat' value='" + String(currentLat) + "'><br>"
+                      "Longitude: <input type='text' name='lon' value='" + String(currentLon) + "'><br>"
+                      "Speed (km/h): <input type='text' name='speed' value='" + String(speed_kmh) + "'><br>"
+                      "Course (degrees): <input type='text' name='course' value='" + String(currentCourse) + "'><br>"
+                      "<input type='submit' value='Set Parameters'>"
+                      "</form>"
+                      "<hr>"
                       "<form action='/set_joystick' method='POST'>"
                       "<h3>Joystick Settings:</h3>"
                       "<input type='checkbox' name='enable_joystick' value='1' checked> Enable Joystick<br>"
                       "Joystick X Pin: <input type='text' name='joystick_x_pin' value='" + String(JOYSTICK_X_PIN) + "'><br>"
                       "Joystick Y Pin: <input type='text' name='joystick_y_pin' value='" + String(JOYSTICK_Y_PIN) + "'><br>"
+                      "Joystick X Neutral: <input type='number' name='joystick_x_neutral' value='" + String(JOYSTICK_NEUTRAL_X) + "'><br>"
+                      "Joystick Y Neutral: <input type='number' name='joystick_y_neutral' value='" + String(JOYSTICK_NEUTRAL_Y) + "'><br>"
+                      "Joystick X Max: <input type='number' name='joystick_x_max' value='" + String(JOYSTICK_MAX_X) + "'><br>"
+                      "Joystick X Min: <input type='number' name='joystick_x_min' value='" + String(JOYSTICK_MIN_X) + "'><br>"
+                      "Joystick Y Max: <input type='number' name='joystick_y_max' value='" + String(JOYSTICK_MAX_Y) + "'><br>"
+                      "Joystick Y Min: <input type='number' name='joystick_y_min' value='" + String(JOYSTICK_MIN_Y) + "'><br>"
                       "<input type='submit' value='Save Settings'>"
                       "</form></body></html>";
         request->send(200, "text/html", html);
     });
 
-    server.on("/set_joystick", HTTP_POST, [](AsyncWebServerRequest *request){
-        if (request->hasParam("enable_joystick", true)) {
-            #define JOYSTICK
-        } else {
-            #define JOYSTICK
+    server.on("/set_parameters", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (request->hasParam("lat", true) && request->hasParam("lon", true) && request->hasParam("speed", true) && request->hasParam("course", true)) {
+            currentLat = request->getParam("lat", true)->value().toFloat();
+            currentLon = request->getParam("lon", true)->value().toFloat();
+            speed_kmh = request->getParam("speed", true)->value().toFloat();
+            currentCourse = request->getParam("course", true)->value().toFloat();
         }
-        request->send(200, "text/html", "Settings updated! <a href='/settings'>Go Back</a>");
+        request->send(200, "text/html", "Parameters updated! <a href='/'>Go Back</a>");
+    });
+
+    server.on("/set_joystick", HTTP_POST, [](AsyncWebServerRequest *request){
+        if (request->hasParam("joystick_x_neutral", true) && request->hasParam("joystick_y_neutral", true) && 
+            request->hasParam("joystick_x_max", true) && request->hasParam("joystick_x_min", true) &&
+            request->hasParam("joystick_y_max", true) && request->hasParam("joystick_y_min", true)) {
+
+            JOYSTICK_NEUTRAL_X = request->getParam("joystick_x_neutral", true)->value().toInt();
+            JOYSTICK_NEUTRAL_Y = request->getParam("joystick_y_neutral", true)->value().toInt();
+            JOYSTICK_MAX_X = request->getParam("joystick_x_max", true)->value().toInt();
+            JOYSTICK_MIN_X = request->getParam("joystick_x_min", true)->value().toInt();
+            JOYSTICK_MAX_Y = request->getParam("joystick_y_max", true)->value().toInt();
+            JOYSTICK_MIN_Y = request->getParam("joystick_y_min", true)->value().toInt();
+        }
+        if (request->hasParam("enable_joystick", true)) {
+            // Enable joystick
+        } else {
+            #undef JOYSTICK
+        }
+        request->send(200, "text/html", "Settings updated! <a href='/'>Go Back</a>");
     });
 
     server.begin();
@@ -146,12 +187,12 @@ void loop() {
         Serial.println(gpggaSentence);
         MySerial1.println(gpggaSentence);
         
-        Serial.println(gngsaSentence1);
-        MySerial1.println(gngsaSentence1);
+        // Serial.println(gngsaSentence1);
+        // MySerial1.println(gngsaSentence1);
 
-        Serial.println(gngsaSentence2);
-        MySerial1.println(gngsaSentence2);
-        
+        // Serial.println(gngsaSentence2);
+        // MySerial1.println(gngsaSentence2);
+        Serial.println();
 
         // Toggle the PPS pin
         // digitalWrite(ppsPin, HIGH);
@@ -167,18 +208,38 @@ void loop() {
 }
 
 void updatePosition(int courseDeg) {
-    float distance_km = (speed_kmh / 3600.0) * (interval / 1000.0);
-    float deltaLon = distance_km / (111.32 * cos(radians(currentLat)));
+    float distance_km = (speed_kmh / 3600.0) * (interval / 1000.0); // Distance traveled in km
+    float courseRad = radians(currentCourse); // Convert course to radians
+
+    // Calculate changes in latitude and longitude based on the current course
+    float deltaLat = distance_km * cos(courseRad) / 111.32; // Approx. 1 degree of latitude = 111.32 km
+    float deltaLon = distance_km * sin(courseRad) / (111.32 * cos(radians(currentLat))); // Longitude distance depends on latitude
+
+    currentLat += deltaLat;
     currentLon += deltaLon;
 
-    #ifdef JOYSTICK
+    // #ifdef JOYSTICK
     // Read joystick values
     joystickXValue = analogRead(JOYSTICK_X_PIN);
     joystickYValue = analogRead(JOYSTICK_Y_PIN);
 
+   // Normalize joystick values
+    float normalizedX = float(joystickXValue - JOYSTICK_NEUTRAL_X) / float(JOYSTICK_MAX_X - JOYSTICK_MIN_X);
+    float normalizedY = float(joystickYValue - JOYSTICK_NEUTRAL_Y) / float(JOYSTICK_MAX_Y - JOYSTICK_MIN_Y);
+
     // Calculate changes based on joystick position
-    float altitudeChange = (joystickXValue - JOYSTICK_NEUTRAL) * ALTITUDE_RATE;
-    float courseChange = (joystickYValue - JOYSTICK_NEUTRAL) * COURSE_RATE;
+    float altitudeChange = normalizedX * ALTITUDE_RATE;
+    float courseChange = normalizedY * COURSE_RATE;
+
+        // If joystick is in the neutral position for X-axis (Acsend rate), set altitude change to 0
+    if (abs(joystickXValue - JOYSTICK_NEUTRAL_X) < 60) { // 60 is a small threshold for neutral position
+        altitudeChange = 0;
+    }
+
+            // If joystick is in the neutral position for Y-axis (Turn rate), set course change to 0
+    if (abs(joystickYValue - JOYSTICK_NEUTRAL_Y) < 15) { // 15 is a small threshold for neutral position
+        courseChange = 0;
+    }
 
     altitude += altitudeChange;
     currentCourse += courseChange;
@@ -186,17 +247,25 @@ void updatePosition(int courseDeg) {
     // Ensure course is within 0 to 360 degrees
     if (currentCourse >= 360) currentCourse -= 360;
     if (currentCourse < 0) currentCourse += 360;
-
-    // Debug output
+#ifdef DEBUG_JOYSTICK
+    // Joystick Debug output
     Serial.print("Joystick X: ");
     Serial.print(joystickXValue);
     Serial.print(" Joystick Y: ");
     Serial.println(joystickYValue);
+    Serial.print(" X Norm: ");
+    Serial.print(normalizedX);
+    Serial.print(" Y Norm: ");
+    Serial.println(normalizedY);
+    Serial.print("Altitude change: ");
+    Serial.print(altitudeChange);
+    Serial.print(" Course change: ");
+    Serial.println(courseChange);
     Serial.print("Altitude: ");
     Serial.println(altitude);
     Serial.print("Course: ");
     Serial.println(currentCourse);
-    #endif
+#endif
 }
 
 
@@ -245,7 +314,7 @@ String generateGNRMCSentence(float lat, float lon, float speed, const char* time
     char lon_dir = (lon >= 0) ? 'E' : 'W';
 
     float speed_knots = speed * 0.539957; // Convert km/h to knots
-    float course = courseDeg; // Course over ground in degrees (east)
+    float course = currentCourse; // Course over ground in degrees (east)
 
     // Create date string
     char dateStr[7];
