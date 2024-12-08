@@ -44,6 +44,7 @@ String generateGPGGASentence(float lat, float lon, float alt, const char* timeSt
 String generateGNGSASentence1();
 String generateGNGSASentence2();
 String generateGNRMCSentence(float lat, float lon, float speed, const char* timeStr);
+String generatePFSIMSentence(float lat, float lon, float speed, float alt, float altitudeChange, float aircraftTurnRate, const char* timeStr);
 String sentence;
 String calculateChecksum(String sentence);
 void handleUbloxQuery();
@@ -58,11 +59,17 @@ HardwareSerial MySerial1(1);
 const unsigned long interval = 1000; // Interval in milliseconds for updates
 unsigned long previousMillis = 0;
 
+String aircraftAddress = "A00001";
+int aircraftAddressType = 1;
+int aircraftType = 1;
 float currentLat = 51.8727;
 float currentLon = 0.125;
 float speed_kmh = 45.0; // Speed in km/h
 int courseDeg = 90; // Direction in degrees
+float oldCourse = 0.0;
+float aircraftTurnRate = 0.0; // Rate of turn in degrees per second
 float altitude = 100.0; // Altitude in meters
+float altitudeChange = 0.0; // Rate of change in altitude in meters per second
 float windDirection = 0.0; // Wind direction in degrees
 float windStrength = 0.0; // Wind strength in km/h
 
@@ -185,13 +192,14 @@ void loop() {
 
 	      String gnrmcSentence = generateGNRMCSentence(currentLat, currentLon, speed_kmh, timeStr);
 		    String gpggaSentence = generateGPGGASentence(currentLat, currentLon, altitude, timeStr);
-		    String gngsaSentence1 = generateGNGSASentence1();
-		    String gngsaSentence2 = generateGNGSASentence2();
+		    // String gngsaSentence1 = generateGNGSASentence1();
+		    // String gngsaSentence2 = generateGNGSASentence2();
+            String pfsimSentence = generatePFSIMSentence(currentLat, currentLon, speed_kmh, altitude, altitudeChange, aircraftTurnRate, timeStr);
         
-        Serial.println(gnrmcSentence);
+        // Serial.println(gnrmcSentence);
         MySerial1.println(gnrmcSentence);
 
-        Serial.println(gpggaSentence);
+        // Serial.println(gpggaSentence);
         MySerial1.println(gpggaSentence);
         
         // Serial.println(gngsaSentence1);
@@ -199,7 +207,8 @@ void loop() {
 
         // Serial.println(gngsaSentence2);
         // MySerial1.println(gngsaSentence2);
-        Serial.println();
+        Serial.println(pfsimSentence);
+        // Serial.println();
 
         // Toggle the PPS pin
         // digitalWrite(ppsPin, HIGH);
@@ -265,6 +274,7 @@ void updatePosition(int courseDeg) {
 
     altitude += altitudeChange;
     heading += headingChange;
+    speed_kmh = effectiveSpeed;
 
     // Ensure course is within 0 to 360 degrees
     if (currentCourse >= 360) currentCourse -= 360;
@@ -284,12 +294,21 @@ void updatePosition(int courseDeg) {
     Serial.print(normalizedX);
     Serial.print(" Y Norm: ");
     Serial.println(normalizedY);
+
     Serial.print("Altitude: ");
+    Serial.println(altitude);
+
+    Serial.print("ClimbRate: ");
+    Serial.println(altitudeChange);
+
     Serial.print("Heading: ");
     Serial.println(heading);
-    Serial.println(altitude);
+ 
     Serial.print("Course: ");
     Serial.println(currentCourse);
+
+    Serial.print("TurnRate: ");
+    Serial.println(aircraftTurnRate);
 #endif
 }
 
@@ -340,7 +359,8 @@ String generateGNRMCSentence(float lat, float lon, float speed, const char* time
 
     float speed_knots = speed * 0.539957; // Convert km/h to knots
     float course = currentCourse; // Course over ground in degrees (east)
-
+    float aircraftTurnRate = oldCourse - course;
+    float oldCourse = course;
     // Create date string
     char dateStr[7];
     struct tm * ptm = gmtime(&fixTime);
@@ -351,6 +371,28 @@ String generateGNRMCSentence(float lat, float lon, float speed, const char* time
 
     String sentence = String(nmea);
     sentence += "*" + calculateChecksum(sentence);
+    return sentence;
+}
+
+String generatePFSIMSentence(float lat, float lon, float speed, float alt, float altitudeChange, float aircraftTurnRate, const char* timeStr) {
+    char nmea[120];
+    int lat_deg = (int)lat;
+    float lat_min = (lat - lat_deg) * 60.0;
+    char lat_dir = (lat >= 0) ? 'N' : 'S';
+    
+    int lon_deg = (int)lon;
+    float lon_min = (lon - lon_deg) * 60.0;
+    char lon_dir = (lon >= 0) ? 'E' : 'W';
+
+    float speed_knots = speed * 0.539957; // Convert km/h to knots
+    float course = currentCourse; // Course over ground in degrees (east)
+    snprintf(nmea, sizeof(nmea), "$PFSIM,%s,%s,%d,%d,%02d%07.5f,%03d%07.5f,%.1f,%.2f,%.2f,%.2f,%.2f*",
+             timeStr, aircraftAddress.c_str(), aircraftAddressType, aircraftType,
+             lat_deg, lat_min, lat_dir, lon_deg, lon_min, lon_dir, alt, speed, course,
+             altitudeChange, aircraftTurnRate);
+
+    String sentence = String(nmea);
+    sentence += calculateChecksum(sentence);
     return sentence;
 }
 
