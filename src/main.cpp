@@ -4,6 +4,18 @@
 #include <HardwareSerial.h>
 #include <time.h>
 #include "credentials.h"
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
+// Define the UUIDs for the BLE service and characteristic
+#define SERVICE_UUID        "0000ffe0-0000-1000-8000-00805f9b34fb"
+#define CHARACTERISTIC_UUID "0000ffe1-0000-1000-8000-00805f9b34fb"
+
+// BLE Server and characteristic
+BLEServer *pServer = NULL;
+BLECharacteristic *pCharacteristic = NULL;
 
 #define JOYSTICK // Enable joystick code
 // #define DEBUG_UPDATEPOSITION // Enable debug output for updatePosition
@@ -94,10 +106,27 @@ AsyncWebServer server(80);
 
 void setup() {
     Serial.begin(9600);
+    // Initialize BLE
+    BLEDevice::init("GPS-SIM_LE");
+    pServer = BLEDevice::createServer();
+    BLEService *pService = pServer->createService(SERVICE_UUID);
+    pCharacteristic = pService->createCharacteristic(
+                        CHARACTERISTIC_UUID,
+                        BLECharacteristic::PROPERTY_READ |
+                        BLECharacteristic::PROPERTY_WRITE |
+                        BLECharacteristic::PROPERTY_NOTIFY |
+                        BLECharacteristic::PROPERTY_INDICATE
+                      );
+    pCharacteristic->addDescriptor(new BLE2902());
+    pService->start();
+    BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+    pAdvertising->addServiceUUID(SERVICE_UUID);
+    pAdvertising->setScanResponse(true);
+    pAdvertising->setMinPreferred(0x06);  // functions that help with iPhone connections issue
+    pAdvertising->setMinPreferred(0x12);
+    BLEDevice::startAdvertising();
+    Serial.println("Waiting for a BLE client connection...");
 
-    // Configure MySerial0 on pins TX=6 and RX=7 (-1, -1 means use the default)
-    // MySerial0.begin(9600, SERIAL_8N1, -1, -1);
-    // MySerial0.print("MySerial0");
 
     // And configure MySerial1 on pins RX=D9, TX=D10
     MySerial1.begin(9600, SERIAL_8N1, 9, 10);
@@ -242,7 +271,17 @@ void loop() {
         MySerial1.println(pfsimSentence);
 
         // Serial.println(lxwp0Sentence);
-        MySerial1.println(lxwp0Sentence);
+        // MySerial1.println(lxwp0Sentence);
+        //send the data to the BLE client
+        pCharacteristic->setValue(gpggaSentence.c_str());
+        pCharacteristic->notify();
+
+        pCharacteristic->setValue(gnrmcSentence.c_str());
+        pCharacteristic->notify();
+
+        pCharacteristic->setValue(lxwp0Sentence.c_str());
+        pCharacteristic->notify();
+        
 #ifdef DEBUG_UPDATEPOSITION
         Serial.printf("Time: %s Distance between aircrafts: %.2f\n\r", timeStr, distancebetweenAircrafts(currentLat, currentLon, aircraftLat, aircraftLon));
 #endif
