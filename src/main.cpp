@@ -6,7 +6,7 @@
 #include "credentials.h"
 #include <BLEDevice.h>
 #include <BLEServer.h>
-#include <BLEUtils.h>
+// #include <BLEUtils.h>
 #include <BLE2902.h>
 
 // Define the UUIDs for the BLE service and characteristic
@@ -34,7 +34,6 @@ int JOYSTICK_MIN_Y = 0; // Minimum ADC value for Y-axis
 
 int joystickXValue = 0;
 int joystickYValue = 0;
-float heading = 90.0; // Aircraft heading in degrees
 float currentCourse = 90.0; // Starting course in degrees (east)
 #else
 #define JOYSTICK_X_PIN 0
@@ -52,15 +51,15 @@ time_t fixTime;
 
 
 // Function prototypes 
-void updatePosition(int courseDeg);
+void updatePosition();
 void updatePositionOther();
 String generateGPGGASentence(float lat, float lon, float alt, const char* timeStr);
 String generateGNGSASentence1();
 String generateGNGSASentence2();
 String generateGNRMCSentence(float lat, float lon, float speed, float currentCourse, const char* timeStr);
-String generatePFSIMSentence(float lat, float aircraftLon, float speed, float alt, float course, float altitudeChange, float aircraftTurnRate, const char* timeStr);
+String generatePFSIMSentence(float lat, float acrftLon, float speed, float alt, float course, float altitudeChange, float acrftTurnRate, const char* timeStr);
 String generateLXWP0sentence(float altitude, float altitudeChange, int heading, int windDirection, float windStrength);
-float distancebetweenAircrafts(float lat1, float lon1, float lat2, float lon2);
+float distancebetweenacrfts(float lat1, float lon1, float lat2, float lon2);
 String sentence;
 String calculateChecksum(String sentence);
 void handleUbloxQuery();
@@ -71,25 +70,25 @@ HardwareSerial MySerial1(1);
 
 const unsigned long interval = 1000; // Interval in milliseconds for updates
 unsigned long previousMillis = 0;
-//section for other aircraft
-String aircraftAddress = "0A0001";
-int aircraftAddressType = 1;
-int aircraftType = 1;
-float aircraftLat = 51.880814;
-float aircraftLon = 0.100230;
-float aircraftSpeed = 45.0;
-float aircraftCourse = 120.0;
-float aircraftAltitude = 150.0;
-float aircrafteffectiveSpeed = 0.0;
-float aircrafteffectiveCourse = 0.0;
-float aircraftTurnRate = 0.0; // Rate of turn in degrees per second
-float aircraftAltitudeChange = 0.0; // Rate of change in altitude in meters per second
+//section for other acrft
+String acrftAddress = "0A0001";
+int acrftAddressType = 1;
+int acrftType = 1;
+float acrftLat = 51.880814;
+float acrftLon = 0.100230;
+float acrftSpeed = 45.0;
+float acrftCourse = 120.0;
+float acrftAltitude = 150.0;
+float acrfteffectiveSpeed = 0.0;
+float acrfteffectiveCourse = 0.0;
+float acrftTurnRate = 0.0; // Rate of turn in degrees per second
+float acrftAltitudeChange = 0.0; // Rate of change in altitude in meters per second
 //end of other aircraft section
 //myShip section
 float currentLat = 51.869999;
 float currentLon = 0.164370;
 float speed_kmh = 45.0; // Speed in km/h
-int courseDeg = 90; // Direction in degrees
+int heading = 90; // Direction in degrees
 float oldCourse = 0.0;
 float altitude = 150.0; // Altitude in meters
 float altitudeChange = 0.0; // Rate of change in altitude in meters per second
@@ -99,8 +98,6 @@ float effectiveCourse = 0.0; // Effective course in degrees based on wind
 float windDirection = 0.0; // Wind direction in degrees
 float windStrength = 0.0; // Wind strength in km/h
 
-int baudRate = 9600; // Default baud rate
-bool ubloxQuery = false;
 
 AsyncWebServer server(80);
 
@@ -169,14 +166,14 @@ void setup() {
                   "Wind Strength (km/h): <input type='text' name='wind_str' value='" + String(windStrength) + "'><br>"
                   "<hr>"
                     "<h3>Aircraft Simulation Parameters</h3>"
-                  "Address: <input type='text' name='aircraft_address' value='" + aircraftAddress + "'><br>"
-                  "Address Type: <input type='number' name='aircraft_address_type' value='" + String(aircraftAddressType) + "'><br>"
-                  "Aircraft Type: <input type='number' name='aircraft_type' value='" + String(aircraftType) + "'><br>"
-                  "Latitude: <input type='text' name='aircraft_lat' value='" + String(aircraftLat) + "'><br>"
-                  "Longitude: <input type='text' name='aircraft_lon' value='" + String(aircraftLon) + "'><br>"
-                  "Speed: <input type='text' name='aircraft_speed' value='" + String(aircraftSpeed) + "'><br>"
-                  "Course: <input type='text' name='aircraft_course' value='" + String(aircraftCourse) + "'><br>"
-                  "Altitude: <input type='text' name='aircraft_altitude' value='" + String(aircraftAltitude) + "'><br>"
+                  "Address: <input type='text' name='aircraft_address' value='" + acrftAddress + "'><br>"
+                  "Address Type: <input type='number' name='aircraft_address_type' value='" + String(acrftAddressType) + "'><br>"
+                  "Aircraft Type: <input type='number' name='aircraft_type' value='" + String(acrftType) + "'><br>"
+                  "Latitude: <input type='text' name='aircraft_lat' value='" + String(acrftLat) + "'><br>"
+                  "Longitude: <input type='text' name='aircraft_lon' value='" + String(acrftLon) + "'><br>"
+                  "Speed: <input type='text' name='aircraft_speed' value='" + String(acrftSpeed) + "'><br>"
+                  "Course: <input type='text' name='aircraft_course' value='" + String(acrftCourse) + "'><br>"
+                  "Altitude: <input type='text' name='aircraft_altitude' value='" + String(acrftAltitude) + "'><br>"
                   "<input type='submit' value='Set Parameters'>"
                   "</form></body></html>"
                   "<hr>"
@@ -204,18 +201,18 @@ server.on("/set_parameters", HTTP_POST, [](AsyncWebServerRequest *request){
         currentLat = request->getParam("lat", true)->value().toFloat();
         currentLon = request->getParam("lon", true)->value().toFloat();
         speed_kmh = request->getParam("speed", true)->value().toFloat();
-        heading = request->getParam("heading", true)->value().toFloat();
+        heading = request->getParam("heading", true)->value().toInt();
         altitude = request->getParam("altitude", true)->value().toFloat();
         windDirection = request->getParam("wind_dir", true)->value().toFloat();
         windStrength = request->getParam("wind_str", true)->value().toFloat();
-        aircraftAddress = request->getParam("aircraft_address", true)->value();
-        aircraftAddressType = request->getParam("aircraft_address_type", true)->value().toInt();
-        aircraftType = request->getParam("aircraft_type", true)->value().toInt();
-        aircraftLat = request->getParam("aircraft_lat", true)->value().toFloat();
-        aircraftLon = request->getParam("aircraft_lon", true)->value().toFloat();
-        aircraftSpeed = request->getParam("aircraft_speed", true)->value().toFloat();
-        aircraftCourse = request->getParam("aircraft_course", true)->value().toFloat();
-        aircraftAltitude = request->getParam("aircraft_altitude", true)->value().toFloat();
+        acrftAddress = request->getParam("aircraft_address", true)->value();
+        acrftAddressType = request->getParam("aircraft_address_type", true)->value().toInt();
+        acrftType = request->getParam("aircraft_type", true)->value().toInt();
+        acrftLat = request->getParam("aircraft_lat", true)->value().toFloat();
+        acrftLon = request->getParam("aircraft_lon", true)->value().toFloat();
+        acrftSpeed = request->getParam("aircraft_speed", true)->value().toFloat();
+        acrftCourse = request->getParam("aircraft_course", true)->value().toFloat();
+        acrftAltitude = request->getParam("aircraft_altitude", true)->value().toFloat();
     }
     request->send(200, "text/html", "Parameters updated! <a href='/'>Go Back</a>");
 });
@@ -248,7 +245,7 @@ void loop() {
     unsigned long currentMillis = millis();
     if (currentMillis - previousMillis >= interval) {
         previousMillis = currentMillis;
-        updatePosition(courseDeg);
+        updatePosition();
         updatePositionOther();
 
         fixTime = time(nullptr);  // Get current time in seconds
@@ -258,7 +255,7 @@ void loop() {
 
         String gnrmcSentence = generateGNRMCSentence(currentLat, currentLon, effectiveSpeed, currentCourse, timeStr);
         String gpggaSentence = generateGPGGASentence(currentLat, currentLon, altitude, timeStr);
-        String pfsimSentence = generatePFSIMSentence(aircraftLat, aircraftLon, aircrafteffectiveSpeed, aircraftAltitude, aircraftCourse, altitudeChange, aircraftTurnRate, timeStr);
+        String pfsimSentence = generatePFSIMSentence(acrftLat, acrftLon, acrfteffectiveSpeed, acrftAltitude, acrftCourse, altitudeChange, acrftTurnRate, timeStr);
         String lxwp0Sentence = generateLXWP0sentence(altitude, altitudeChange, heading, windDirection, windStrength);
 
         Serial.println(gpggaSentence);
@@ -281,32 +278,15 @@ void loop() {
 
         pCharacteristic->setValue(lxwp0Sentence.c_str());
         pCharacteristic->notify();
-        
+
 #ifdef DEBUG_UPDATEPOSITION
-        Serial.printf("Time: %s Distance between aircrafts: %.2f\n\r", timeStr, distancebetweenAircrafts(currentLat, currentLon, aircraftLat, aircraftLon));
+        Serial.printf("Time: %s Distance between aircrafts: %.2f\n\r", timeStr, distancebetweenAircrafts(currentLat, currentLon, acrftLat, acrftLon));
 #endif
-        // Serial.println(gngsaSentence1);
-        // MySerial1.println(gngsaSentence1);
-
-        // Serial.println(gngsaSentence2);
-        // MySerial1.println(gngsaSentence2);
        
-        // Serial.println();
-
-        // Toggle the PPS pin
-        // digitalWrite(ppsPin, HIGH);
-        // delay(10); // Small pulse duration
-        // digitalWrite(ppsPin, LOW);
-
-       
-        // Handle u-blox queries
-        if (!ubloxQuery) {
-            handleUbloxQuery();
-        }
     }
 }
 
-void updatePosition(int courseDeg) {
+void updatePosition() {
     float distance_km = (speed_kmh / 3600.0) * (interval / 1000.0); // Distance traveled in km
     float headingRad = radians(heading); // Convert heading to radians
     float windRad = radians(windDirection); // Convert wind direction to radians
@@ -362,7 +342,7 @@ void updatePosition(int courseDeg) {
     if (currentCourse >= 360) currentCourse -= 360;
     if (currentCourse < 0) currentCourse += 360;
 
-    aircraftTurnRate = oldCourse - currentCourse;
+    acrftTurnRate = oldCourse - currentCourse;
     oldCourse = currentCourse;
 
         // Ensure heading is within 0 to 360 degrees
@@ -394,7 +374,7 @@ void updatePosition(int courseDeg) {
     // Serial.println(currentCourse);
 
     // Serial.print("TurnRate: ");
-    // Serial.println(aircraftTurnRate);
+    // Serial.println(acrftTurnRate);
 
     // Serial.print("GrSpeed: ");
     // Serial.println(effectiveSpeed);
@@ -402,43 +382,43 @@ void updatePosition(int courseDeg) {
 }
 
 void updatePositionOther() {
-    float distance_km = (aircraftSpeed / 3600.0) * (interval / 1000.0); // Distance traveled in km
-    float headingRad = radians(aircraftCourse); // Convert heading to radians
+    float distance_km = (acrftSpeed / 3600.0) * (interval / 1000.0); // Distance traveled in km
+    float headingRad = radians(acrftCourse); // Convert heading to radians
     float windRad = radians(windDirection); // Convert wind direction to radians
 
     // Calculate effective components due to wind and heading
-    float effectiveSpeedX = (aircraftSpeed * cos(headingRad)) + (windStrength * cos(windRad));
-    float effectiveSpeedY = (aircraftSpeed * sin(headingRad)) + (windStrength * sin(windRad));
-    aircrafteffectiveSpeed = sqrt(sq(effectiveSpeedX) + sq(effectiveSpeedY));
+    float effectiveSpeedX = (acrftSpeed * cos(headingRad)) + (windStrength * cos(windRad));
+    float effectiveSpeedY = (acrftSpeed * sin(headingRad)) + (windStrength * sin(windRad));
+    acrfteffectiveSpeed = sqrt(sq(effectiveSpeedX) + sq(effectiveSpeedY));
 
     // Calculate the effective course considering wind
     float effectiveCourseRad = atan2(effectiveSpeedY, effectiveSpeedX);
-    aircrafteffectiveCourse = degrees(effectiveCourseRad);
+    acrfteffectiveCourse = degrees(effectiveCourseRad);
 
     // Convert effective course back to degrees
-    if (aircrafteffectiveCourse >= 360) aircrafteffectiveCourse -= 360;
-    if (aircrafteffectiveCourse < 0) aircrafteffectiveCourse += 360;
+    if (acrfteffectiveCourse >= 360) acrfteffectiveCourse -= 360;
+    if (acrfteffectiveCourse < 0) acrfteffectiveCourse += 360;
 
     // Calculate changes in latitude and longitude based on the effective course
-    float deltaLat = (aircrafteffectiveSpeed / 3600.0) * (interval / 1000.0) * cos(effectiveCourseRad) / 111.32; // Approx. 1 degree of latitude = 111.32 km
-    float deltaLon = (aircrafteffectiveSpeed / 3600.0) * (interval / 1000.0) * sin(effectiveCourseRad) / (111.32 * cos(radians(aircraftLat))); // Longitude distance depends on latitude
+    float deltaLat = (acrfteffectiveSpeed / 3600.0) * (interval / 1000.0) * cos(effectiveCourseRad) / 111.32; // Approx. 1 degree of latitude = 111.32 km
+    float deltaLon = (acrfteffectiveSpeed / 3600.0) * (interval / 1000.0) * sin(effectiveCourseRad) / (111.32 * cos(radians(acrftLat))); // Longitude distance depends on latitude
 
-    aircraftLat += deltaLat;
-    aircraftLon += deltaLon;
+    acrftLat += deltaLat;
+    acrftLon += deltaLon;
     #ifdef DEBUG_UPDATEPOSITION
-    Serial.printf("Aircraft: Lat: %f, Lon: %f, Speed: %.0f, Course: %.0f, Altitude: %.1f\n\r", aircraftLat, aircraftLon, aircrafteffectiveSpeed, aircrafteffectiveCourse, aircraftAltitude);
+    Serial.printf("Aircraft: Lat: %f, Lon: %f, Speed: %.0f, Course: %.0f, Altitude: %.1f\n\r", acrftLat, acrftLon, acrfteffectiveSpeed, acrfteffectiveCourse, acrftAltitude);
 
-    // Serial.print("aircraft Effective Speed: ");
-    // Serial.print(aircrafteffectiveSpeed);
-    // Serial.print(" aircraft effective Course : ");
-    // Serial.println(aircrafteffectiveCourse );
-    // Serial.print(" aircraft Lat: ");
-    // Serial.print(aircraftLat, 6);
-    // Serial.print(" aircraft Lon: ");
-    // Serial.println(aircraftLon, 6);
+    // Serial.print("acrft Effective Speed: ");
+    // Serial.print(acrfteffectiveSpeed);
+    // Serial.print(" acrft effective Course : ");
+    // Serial.println(acrfteffectiveCourse );
+    // Serial.print(" acrft Lat: ");
+    // Serial.print(acrftLat, 6);
+    // Serial.print(" acrft Lon: ");
+    // Serial.println(acrftLon, 6);
 
     // Serial.print("Altitude: ");
-    // Serial.println(aircraftAltitude);
+    // Serial.println(acrftAltitude);
 
     // Serial.print("Delta Lat: ");
     // Serial.println(deltaLat, 6);
@@ -449,7 +429,7 @@ void updatePositionOther() {
 #endif
 
 }
-float distancebetweenAircrafts(float lat1, float lon1, float lat2, float lon2) {
+float distancebetweenacrfts(float lat1, float lon1, float lat2, float lon2) {
     float R = 6371; // Radius of the Earth in kilometers
     float dLat = radians(lat2 - lat1); // Difference in latitude in radians
     float dLon = radians(lon2 - lon1); // Difference in longitude in radians
@@ -506,16 +486,16 @@ String generateGNRMCSentence(float lat, float lon, float speed, float currentCou
     return sentence;
 }
 
-String generatePFSIMSentence(float lat, float lon, float speed, float alt, float course, float altitudeChange, float aircraftTurnRate, const char* timeStr) {
+String generatePFSIMSentence(float lat, float lon, float speed, float alt, float course, float altitudeChange, float acrftTurnRate, const char* timeStr) {
     char nmea[120];
-    float aircraftCourse = course; 
-    float aircraftAlt = alt; // Altitude in meters
+    float acrftCourse = course; 
+    float acrftAlt = alt; // Altitude in meters
     float speed_ms = speed * 0.2777777; // Convert km/h to meters per second
 
     snprintf(nmea, sizeof(nmea), "$PFSIM,%s,%s,%d,%d,%.6f,%.6f,%.1f,%.2f,%.2f,%.2f,%.2f",
-             timeStr, aircraftAddress.c_str(), aircraftAddressType, aircraftType,
-             lat, lon, aircraftAlt, speed_ms, aircraftCourse,
-             altitudeChange, aircraftTurnRate);
+             timeStr, acrftAddress.c_str(), acrftAddressType, acrftType,
+             lat, lon, acrftAlt, speed_ms, acrftCourse,
+             altitudeChange, acrftTurnRate);
 
     String sentence = String(nmea);
     sentence += "*" + calculateChecksum(sentence);
@@ -533,28 +513,7 @@ String generateLXWP0sentence(float altitude, float altitudeChange, int heading, 
     return sentence;
 
 }
-void handleUbloxQuery() {
-    if (MySerial1.available()) {
-        String query = MySerial1.readString();
-        Serial.print("Received u-blox query: ");
-        Serial.println(query);
 
-        if (query.startsWith("$PCAS06")) {
-            // Create response with version information
-            String response = "$PCAS06,";
-            // Adding padding to ensure the response is at least 33 characters long
-            while (response.length() < 29) {
-                response += "0";
-            }
-            response += "0008";
-            response += "*" + calculateChecksum(response);
-            response += "\r\n";
-            MySerial1.println(response);
-            Serial.print("Sent response: ");
-            Serial.println(response);
-        }
-    }
-}
 
 // Checksum function
 String calculateChecksum(String sentence) {
