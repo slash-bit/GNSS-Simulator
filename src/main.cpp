@@ -4,6 +4,9 @@
 #include <HardwareSerial.h>
 #include <time.h>
 #include "credentials.h"
+
+#undef BLE //enable BLE
+#ifdef BLE
 #include <BLEDevice.h>
 #include <BLEServer.h>
 // #include <BLEUtils.h>
@@ -16,7 +19,7 @@
 // BLE Server and characteristic
 BLEServer *pServer = NULL;
 BLECharacteristic *pCharacteristic = NULL;
-
+#endif
 #define JOYSTICK // Enable joystick code
 // #define DEBUG_UPDATEPOSITION // Enable debug output for updatePosition
 // #define DEBUG_JOYSTICK // Enable debug output for joystick
@@ -56,16 +59,14 @@ void updatePositionOther();
 String generateGPGGASentence(float lat, float lon, float alt, const char* timeStr);
 String generateGNGSASentence1();
 String generateGNGSASentence2();
-String generateGNRMCSentence(float lat, float lon, float speed, float currentCourse, const char* timeStr);
-String generatePFSIMSentence(float lat, float acrftLon, float speed, float alt, float course, float altitudeChange, float acrftTurnRate, const char* timeStr);
+String generateGNRMCSentence(float lat, float lon, float effectivespeed, float currentCourse, const char* timeStr);
+String generatePFSIMSentence(float lat, float acrftLon, float acrfteffectiveSpeed, float acrftAltitude, float acrftCurrentCourse, float actftClimbRate, float acrftTurnRate, const char* timeStr);
 String generateLXWP0sentence(float altitude, float altitudeChange, int heading, int windDirection, float windStrength);
 float distancebetweenacrfts(float lat1, float lon1, float lat2, float lon2);
 String sentence;
 String calculateChecksum(String sentence);
-void handleUbloxQuery();
 
-// Define two Serial devices mapped to the two internal UARTs
-// HardwareSerial MySerial0(0);
+// Define Serial devices mapped to  internal UARTs
 HardwareSerial MySerial1(1);
 
 const unsigned long interval = 1000; // Interval in milliseconds for updates
@@ -80,16 +81,16 @@ float acrftSpeed = 45.0;
 float acrftCourse = 120.0;
 float acrftAltitude = 150.0;
 float acrfteffectiveSpeed = 0.0;
-float acrfteffectiveCourse = 0.0;
+float acrftCurrentCourse = 0.0;
+float acrftOldCourse = 0.0;
 float acrftTurnRate = 0.0; // Rate of turn in degrees per second
-float acrftAltitudeChange = 0.0; // Rate of change in altitude in meters per second
+float acrftClimbRate = 0.0; // Rate of change in altitude in meters per second
 //end of other aircraft section
-//myShip section
+//ownShip section
 float currentLat = 51.869999;
 float currentLon = 0.164370;
 float speed_kmh = 45.0; // Speed in km/h
 int heading = 90; // Direction in degrees
-float oldCourse = 0.0;
 float altitude = 150.0; // Altitude in meters
 float altitudeChange = 0.0; // Rate of change in altitude in meters per second
 float effectiveSpeed = 0.0; // Effective speed in km/h based on wind
@@ -103,6 +104,7 @@ AsyncWebServer server(80);
 
 void setup() {
     Serial.begin(9600);
+#ifdef BLE
     // Initialize BLE
     BLEDevice::init("GPS-SIM_LE");
     pServer = BLEDevice::createServer();
@@ -123,8 +125,7 @@ void setup() {
     pAdvertising->setMinPreferred(0x12);
     BLEDevice::startAdvertising();
     Serial.println("Waiting for a BLE client connection...");
-
-
+#endif
     // And configure MySerial1 on pins RX=D9, TX=D10
     MySerial1.begin(9600, SERIAL_8N1, 9, 10);
     MySerial1.print("MySerial1");
@@ -255,7 +256,7 @@ void loop() {
 
         String gnrmcSentence = generateGNRMCSentence(currentLat, currentLon, effectiveSpeed, currentCourse, timeStr);
         String gpggaSentence = generateGPGGASentence(currentLat, currentLon, altitude, timeStr);
-        String pfsimSentence = generatePFSIMSentence(acrftLat, acrftLon, acrfteffectiveSpeed, acrftAltitude, acrftCourse, altitudeChange, acrftTurnRate, timeStr);
+        String pfsimSentence = generatePFSIMSentence(acrftLat, acrftLon, acrfteffectiveSpeed, acrftAltitude, acrftCourse, acrftClimbRate, acrftTurnRate, timeStr);
         String lxwp0Sentence = generateLXWP0sentence(altitude, altitudeChange, heading, windDirection, windStrength);
 
         Serial.println(gpggaSentence);
@@ -269,6 +270,7 @@ void loop() {
 
         // Serial.println(lxwp0Sentence);
         // MySerial1.println(lxwp0Sentence);
+#ifdef BLE
         //send the data to the BLE client
         pCharacteristic->setValue(gpggaSentence.c_str());
         pCharacteristic->notify();
@@ -278,7 +280,7 @@ void loop() {
 
         pCharacteristic->setValue(lxwp0Sentence.c_str());
         pCharacteristic->notify();
-
+#endif
 #ifdef DEBUG_UPDATEPOSITION
         Serial.printf("Time: %s Distance between aircrafts: %.2f\n\r", timeStr, distancebetweenAircrafts(currentLat, currentLon, acrftLat, acrftLon));
 #endif
@@ -298,12 +300,12 @@ void updatePosition() {
 
     // Calculate the effective course considering wind
     float effectiveCourseRad = atan2(effectiveSpeedY, effectiveSpeedX);
-    effectiveCourse = degrees(effectiveCourseRad);
+    float effectiveCourse = degrees(effectiveCourseRad);
 
     // Convert effective course back to degrees
-    currentCourse = effectiveCourse;
-    if (currentCourse >= 360) currentCourse -= 360;
-    if (currentCourse < 0) currentCourse += 360;
+    if (effectiveCourse >= 360) effectiveCourse -= 360;
+    if (effectiveCourse < 0) effectiveCourse += 360;
+    currentCourse = effectiveCourse; //assign gloabl variable for later use
 
     // Calculate changes in latitude and longitude based on the effective course
     float deltaLat = (effectiveSpeed / 3600.0) * (interval / 1000.0) * cos(effectiveCourseRad) / 111.32; // Approx. 1 degree of latitude = 111.32 km
@@ -338,14 +340,7 @@ void updatePosition() {
     altitude += altitudeChange;
     heading += headingChange;
 
-    // Ensure course is within 0 to 360 degrees
-    if (currentCourse >= 360) currentCourse -= 360;
-    if (currentCourse < 0) currentCourse += 360;
-
-    acrftTurnRate = oldCourse - currentCourse;
-    oldCourse = currentCourse;
-
-        // Ensure heading is within 0 to 360 degrees
+    // Ensure heading is within 0 to 360 degrees
     if (heading >= 360) heading -= 360;
     if (heading < 0) heading += 360;
 
@@ -389,29 +384,33 @@ void updatePositionOther() {
     // Calculate effective components due to wind and heading
     float effectiveSpeedX = (acrftSpeed * cos(headingRad)) + (windStrength * cos(windRad));
     float effectiveSpeedY = (acrftSpeed * sin(headingRad)) + (windStrength * sin(windRad));
-    acrfteffectiveSpeed = sqrt(sq(effectiveSpeedX) + sq(effectiveSpeedY));
-
+    float effectiveSpeed = sqrt(sq(effectiveSpeedX) + sq(effectiveSpeedY));
+    acrfteffectiveSpeed = effectiveSpeed;
     // Calculate the effective course considering wind
     float effectiveCourseRad = atan2(effectiveSpeedY, effectiveSpeedX);
-    acrfteffectiveCourse = degrees(effectiveCourseRad);
+    float effectiveCourse = degrees(effectiveCourseRad);
 
     // Convert effective course back to degrees
-    if (acrfteffectiveCourse >= 360) acrfteffectiveCourse -= 360;
-    if (acrfteffectiveCourse < 0) acrfteffectiveCourse += 360;
-
+    if (effectiveCourse >= 360) effectiveCourse -= 360;
+    if (effectiveCourse < 0) effectiveCourse += 360;
+    acrftCurrentCourse = effectiveCourse;
     // Calculate changes in latitude and longitude based on the effective course
     float deltaLat = (acrfteffectiveSpeed / 3600.0) * (interval / 1000.0) * cos(effectiveCourseRad) / 111.32; // Approx. 1 degree of latitude = 111.32 km
     float deltaLon = (acrfteffectiveSpeed / 3600.0) * (interval / 1000.0) * sin(effectiveCourseRad) / (111.32 * cos(radians(acrftLat))); // Longitude distance depends on latitude
 
     acrftLat += deltaLat;
     acrftLon += deltaLon;
+
+    acrftTurnRate = acrftOldCourse - acrftCurrentCourse;
+    acrftOldCourse = acrftCurrentCourse;
+
     #ifdef DEBUG_UPDATEPOSITION
-    Serial.printf("Aircraft: Lat: %f, Lon: %f, Speed: %.0f, Course: %.0f, Altitude: %.1f\n\r", acrftLat, acrftLon, acrfteffectiveSpeed, acrfteffectiveCourse, acrftAltitude);
+    Serial.printf("Aircraft: Lat: %f, Lon: %f, Speed: %.0f, Course: %.0f, Altitude: %.1f\n\r", acrftLat, acrftLon, acrfteffectiveSpeed, acrftCurrentCourse, acrftAltitude);
 
     // Serial.print("acrft Effective Speed: ");
     // Serial.print(acrfteffectiveSpeed);
     // Serial.print(" acrft effective Course : ");
-    // Serial.println(acrfteffectiveCourse );
+    // Serial.println(acrftCurrentCourse );
     // Serial.print(" acrft Lat: ");
     // Serial.print(acrftLat, 6);
     // Serial.print(" acrft Lon: ");
