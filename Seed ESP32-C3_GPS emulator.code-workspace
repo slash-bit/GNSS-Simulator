@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "../Seed ESP32-C3_GPS emulator"
+		},
+		{
+			"name": "GPS_Simulator",
+			"path": "."
+		}
+	],
+	"settings": {
+		"files.associations": {
+			"*.yaml": "home-assistant"
+		}
+	}
+}
