@@ -5,11 +5,12 @@
 #include <time.h>
 #include "credentials.h"
 
-#undef BLE //enable BLE
+//#undef BLE 
+// #define BLE
 #ifdef BLE
 #include <BLEDevice.h>
 #include <BLEServer.h>
-// #include <BLEUtils.h>
+#include <BLEUtils.h>
 #include <BLE2902.h>
 
 // Define the UUIDs for the BLE service and characteristic
@@ -20,27 +21,31 @@
 BLEServer *pServer = NULL;
 BLECharacteristic *pCharacteristic = NULL;
 #endif
-#define JOYSTICK // Enable joystick code
+// #define JOYSTICK // Enable joystick code
 // #define DEBUG_UPDATEPOSITION // Enable debug output for updatePosition
 // #define DEBUG_JOYSTICK // Enable debug output for joystick
+#define GPS_RX_PIN 9 // GPS RX pin
+#define GPS_TX_PIN 10 // GPS TX pin
+
 #ifdef JOYSTICK
-#define JOYSTICK_X_PIN 2 // ADC pin for X-axis
-#define JOYSTICK_Y_PIN 3 // ADC pin for Y-axis
-int JOYSTICK_NEUTRAL_X = 1935; // Approx. mid-point of ADC for X-axis
-int JOYSTICK_NEUTRAL_Y = 2125; // Approx. mid-point of ADC for Y-axis
-int JOYSTICK_MAX_X = 4095; // Maximum ADC value for X-axis
-int JOYSTICK_MIN_X = 0; // Minimum ADC value for X-axis
-int JOYSTICK_MAX_Y = 4095; // Maximum ADC value for Y-axis
-int JOYSTICK_MIN_Y = 0; // Minimum ADC value for Y-axis
+#define JOYSTICK_X_PIN A0 // ADC pin for X-axis
+#define JOYSTICK_Y_PIN A1 // ADC pin for Y-axis
+int JOYSTICK_NEUTRAL_X = 1510; // Approx. mid-point of ADC for X-axis
+int JOYSTICK_NEUTRAL_Y = 1604; // Approx. mid-point of ADC for Y-axis
+int JOYSTICK_MAX_X = 2989; // Maximum ADC value for X-axis
+int JOYSTICK_MIN_X = 4; // Minimum ADC value for X-axis
+int JOYSTICK_MAX_Y = 2989; // Maximum ADC value for Y-axis
+int JOYSTICK_MIN_Y = 3; // Minimum ADC value for Y-axis
 #define ALTITUDE_RATE 10.0 // Rate of change in altitude per unit deviation
 #define COURSE_RATE 20.0 // Rate of change in course per unit deviation
 
 int joystickXValue = 0;
 int joystickYValue = 0;
+bool joystickEnabled = true; // Runtime joystick enable/disable flag
 float currentCourse = 90.0; // Starting course in degrees (east)
 #else
-#define JOYSTICK_X_PIN 0
-#define JOYSTICK_Y_PIN 1
+// #define JOYSTICK_X_PIN 0
+// #define JOYSTICK_Y_PIN 1
 #endif
 
 //define ssid and password from wifi.h file located in the include folder
@@ -53,9 +58,12 @@ const int   daylightOffset_sec = 0;
 time_t fixTime;
 
 
-// Function prototypes 
+// Function prototypes
 void updatePosition();
 void updatePositionOther();
+void startScenario1();
+void stopScenario1();
+void updatePositionScenario1();
 String generateGPGGASentence(float lat, float lon, float alt, const char* timeStr);
 String generateGNGSASentence1();
 String generateGNGSASentence2();
@@ -99,6 +107,20 @@ float effectiveCourse = 0.0; // Effective course in degrees based on wind
 float windDirection = 0.0; // Wind direction in degrees
 float windStrength = 0.0; // Wind strength in km/h
 
+//Scenario 1 section
+bool scenarioActive = false; // Is scenario running
+bool scenarioComplete = false; // Has scenario finished (stops sentence generation)
+float scenario1_startLat = 51.869999; // Scenario 1 starting latitude
+float scenario1_startLon = 0.164370; // Scenario 1 starting longitude
+float scenario1_startAlt = 150.0; // Scenario 1 starting altitude
+int scenario1_currentLeg = 0; // Current leg (0-39)
+float scenario1_legProgress = 0.0; // Progress along current leg (0.0-1.0)
+bool scenario1_eastward = true; // Flying east or west
+float scenario1_northEdgeLat = 0.0; // North boundary
+float scenario1_southEdgeLat = 0.0; // South boundary
+float scenario1_westEdgeLon = 0.0; // West boundary
+float scenario1_eastEdgeLon = 0.0; // East boundary
+float scenario1_legDistanceKm = 2.0; // Distance per leg in km
 
 AsyncWebServer server(80);
 
@@ -127,9 +149,9 @@ void setup() {
     Serial.println("Waiting for a BLE client connection...");
 #endif
     // And configure MySerial1 on pins RX=D9, TX=D10
-    MySerial1.begin(9600, SERIAL_8N1, 9, 10);
+    MySerial1.begin(9600, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
     MySerial1.print("MySerial1");
-
+    delay(5000);
     // Connect to Wi-Fi
     WiFi.begin(ssid, password);
     while (WiFi.status() != WL_CONNECTED) {
@@ -137,6 +159,8 @@ void setup() {
         Serial.println("Connecting to WiFi...");
     }
     Serial.println("Connected to WiFi");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
 
         // Initialize and get the time
     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
@@ -180,7 +204,7 @@ void setup() {
                   "<hr>"
                   "<form action='/set_joystick' method='POST'>"
                   "<h3>Joystick Settings:</h3>"
-                  "<input type='checkbox' name='enable_joystick' value='1' checked> Enable Joystick<br>"
+                  "<input type='checkbox' name='enable_joystick' value='1' " + (joystickEnabled ? String("checked") : String("")) + "> Enable Joystick<br>"
                   "Joystick X Pin: <input type='text' name='joystick_x_pin' value='" + String(JOYSTICK_X_PIN) + "'><br>"
                   "Joystick Y Pin: <input type='text' name='joystick_y_pin' value='" + String(JOYSTICK_Y_PIN) + "'><br>"
                   "Joystick X Neutral: <input type='number' name='joystick_x_neutral' value='" + String(JOYSTICK_NEUTRAL_X) + "'><br>"
@@ -190,7 +214,39 @@ void setup() {
                   "Joystick Y Max: <input type='number' name='joystick_y_max' value='" + String(JOYSTICK_MAX_Y) + "'><br>"
                   "Joystick Y Min: <input type='number' name='joystick_y_min' value='" + String(JOYSTICK_MIN_Y) + "'><br>"
                   "<input type='submit' value='Save Settings'>"
-                  "</form></body></html>";
+                  "</form>"
+                  "<hr>"
+                  "<h3>Flight Scenario 1 - Square Pattern (2km x 2km)</h3>"
+                  "<form action='/start_scenario1' method='POST'>"
+                  "Starting Latitude: <input type='text' name='sc1_lat' value='" + String(scenario1_startLat) + "'><br>"
+                  "Starting Longitude: <input type='text' name='sc1_lon' value='" + String(scenario1_startLon) + "'><br>"
+                  "Starting Altitude (m): <input type='text' name='sc1_alt' value='" + String(scenario1_startAlt) + "'><br>"
+                  "<input type='submit' value='Start Scenario 1'>"
+                  "</form>"
+                  "<form action='/stop_scenario' method='POST'>"
+                  "<input type='submit' value='Stop Scenario'>"
+                  "</form>"
+                  "<div id='progress' style='border: 1px solid #ccc; padding: 10px; margin-top: 10px;'>"
+                  "<p><strong>Status:</strong> <span id='status'>Idle</span></p>"
+                  "<p><strong>Progress:</strong> <span id='percent'>0</span>%</p>"
+                  "<progress id='progressbar' value='0' max='100' style='width:400px; height:20px;'></progress>"
+                  "<p><strong>Leg:</strong> <span id='leg'>0</span>/40 | <strong>Direction:</strong> <span id='direction'>-</span></p>"
+                  "</div>"
+                  "<script>"
+                  "setInterval(function() {"
+                  "  fetch('/scenario_status')"
+                  "    .then(response => response.json())"
+                  "    .then(data => {"
+                  "      document.getElementById('status').textContent = data.status;"
+                  "      document.getElementById('percent').textContent = data.percent;"
+                  "      document.getElementById('progressbar').value = data.percent;"
+                  "      document.getElementById('leg').textContent = data.leg;"
+                  "      document.getElementById('direction').textContent = data.direction;"
+                  "    })"
+                  "    .catch(error => console.log('Error:', error));"
+                  "}, 1000);"
+                  "</script>"
+                  "</body></html>";
     request->send(200, "text/html", html);
 });
 
@@ -219,7 +275,8 @@ server.on("/set_parameters", HTTP_POST, [](AsyncWebServerRequest *request){
 });
 
 server.on("/set_joystick", HTTP_POST, [](AsyncWebServerRequest *request){
-    if (request->hasParam("joystick_x_neutral", true) && request->hasParam("joystick_y_neutral", true) && 
+    #ifdef JOYSTICK
+    if (request->hasParam("joystick_x_neutral", true) && request->hasParam("joystick_y_neutral", true) &&
         request->hasParam("joystick_x_max", true) && request->hasParam("joystick_x_min", true) &&
         request->hasParam("joystick_y_max", true) && request->hasParam("joystick_y_min", true)) {
 
@@ -230,12 +287,56 @@ server.on("/set_joystick", HTTP_POST, [](AsyncWebServerRequest *request){
         JOYSTICK_MAX_Y = request->getParam("joystick_y_max", true)->value().toInt();
         JOYSTICK_MIN_Y = request->getParam("joystick_y_min", true)->value().toInt();
     }
+
+    // Handle joystick enable/disable checkbox
     if (request->hasParam("enable_joystick", true)) {
-        #define JOYSTICK
+        joystickEnabled = true;
+        Serial.println("Joystick enabled");
     } else {
-        #undef JOYSTICK
+        joystickEnabled = false;
+        Serial.println("Joystick disabled");
     }
+    #endif
     request->send(200, "text/html", "Settings updated! <a href='/'>Go Back</a>");
+});
+
+server.on("/start_scenario1", HTTP_POST, [](AsyncWebServerRequest *request){
+    if (request->hasParam("sc1_lat", true) && request->hasParam("sc1_lon", true) && request->hasParam("sc1_alt", true)) {
+        scenario1_startLat = request->getParam("sc1_lat", true)->value().toFloat();
+        scenario1_startLon = request->getParam("sc1_lon", true)->value().toFloat();
+        scenario1_startAlt = request->getParam("sc1_alt", true)->value().toFloat();
+        startScenario1();
+    }
+    request->send(200, "text/html", "Scenario 1 started! <a href='/'>Go Back</a>");
+});
+
+server.on("/stop_scenario", HTTP_POST, [](AsyncWebServerRequest *request){
+    stopScenario1();
+    request->send(200, "text/html", "Scenario stopped! <a href='/'>Go Back</a>");
+});
+
+server.on("/scenario_status", HTTP_GET, [](AsyncWebServerRequest *request){
+    // Calculate progress percentage
+    float progressPercent = (scenario1_currentLeg + scenario1_legProgress) / 40.0 * 100.0;
+
+    // Determine status
+    String status = "Idle";
+    if (scenarioActive) {
+        status = "Running";
+    } else if (scenarioComplete) {
+        status = "Complete";
+    }
+
+    // Determine direction
+    String direction = "-";
+    if (scenarioActive || scenarioComplete) {
+        direction = scenario1_eastward ? "East" : "West";
+    }
+
+    // Build JSON response
+    String json = "{\"status\":\"" + status + "\",\"percent\":" + String((int)progressPercent) + ",\"leg\":" + String(scenario1_currentLeg) + ",\"direction\":\"" + direction + "\"}";
+
+    request->send(200, "application/json", json);
 });
 
 server.begin();
@@ -246,45 +347,61 @@ void loop() {
     unsigned long currentMillis = millis();
     if (currentMillis - previousMillis >= interval) {
         previousMillis = currentMillis;
-        updatePosition();
-        updatePositionOther();
 
-        fixTime = time(nullptr);  // Get current time in seconds
-        struct tm * ptm = gmtime(&fixTime); // Convert to tm struct for UTC
-        char timeStr[11];
-        strftime(timeStr, sizeof(timeStr), "%H%M%S", ptm); // Format time as HHMMSS
+        // Only update position and generate sentences if scenario is not complete
+        if (!scenarioComplete) {
+            if (scenarioActive) {
+                // Scenario mode - no wind, no other aircraft
+                updatePositionScenario1();
+            } else {
+                // Manual/joystick mode
+                updatePosition();
+                updatePositionOther();
+            }
 
-        String gnrmcSentence = generateGNRMCSentence(currentLat, currentLon, effectiveSpeed, currentCourse, timeStr);
-        String gpggaSentence = generateGPGGASentence(currentLat, currentLon, altitude, timeStr);
-        String pfsimSentence = generatePFSIMSentence(acrftLat, acrftLon, acrfteffectiveSpeed, acrftAltitude, acrftCourse, acrftClimbRate, acrftTurnRate, timeStr);
-        String lxwp0Sentence = generateLXWP0sentence(altitude, altitudeChange, heading, windDirection, windStrength);
+            fixTime = time(nullptr);  // Get current time in seconds
+            struct tm * ptm = gmtime(&fixTime); // Convert to tm struct for UTC
+            char timeStr[11];
+            strftime(timeStr, sizeof(timeStr), "%H%M%S.00", ptm); // Format time as HHMMSS
 
-        Serial.println(gpggaSentence);
-        MySerial1.println(gpggaSentence);
-        
-        Serial.println(gnrmcSentence);
-        MySerial1.println(gnrmcSentence);
-        
-        // Serial.println(pfsimSentence);
-        MySerial1.println(pfsimSentence);
+            String gnrmcSentence = generateGNRMCSentence(currentLat, currentLon, speed_kmh * 0.539957, heading, timeStr);
+            String gpggaSentence = generateGPGGASentence(currentLat, currentLon, altitude, timeStr);
+            String lxwp0Sentence = generateLXWP0sentence(altitude, altitudeChange, heading, windDirection, windStrength);
 
-        // Serial.println(lxwp0Sentence);
-        // MySerial1.println(lxwp0Sentence);
+            // Only generate PFSIM if in manual mode (not scenario)
+            String pfsimSentence = "";
+            if (!scenarioActive) {
+                pfsimSentence = generatePFSIMSentence(acrftLat, acrftLon, acrfteffectiveSpeed, acrftAltitude, acrftCourse, acrftClimbRate, acrftTurnRate, timeStr);
+            }
+
+            Serial.println(gpggaSentence);
+            MySerial1.println(gpggaSentence);
+
+            Serial.println(gnrmcSentence);
+            MySerial1.println(gnrmcSentence);
+
+            if (!scenarioActive) {
+                // Serial.println(pfsimSentence);
+                MySerial1.println(pfsimSentence);
+            }
+
+            // Serial.println(lxwp0Sentence);
+            // MySerial1.println(lxwp0Sentence);
 #ifdef BLE
-        //send the data to the BLE client
-        pCharacteristic->setValue(gpggaSentence.c_str());
-        pCharacteristic->notify();
-
-        pCharacteristic->setValue(gnrmcSentence.c_str());
-        pCharacteristic->notify();
-
-        pCharacteristic->setValue(lxwp0Sentence.c_str());
-        pCharacteristic->notify();
+            //send the data to the BLE client
+            pCharacteristic->setValue(gpggaSentence.c_str());
+            pCharacteristic->notify();
+            delay(10);
+            pCharacteristic->setValue(gnrmcSentence.c_str());
+            pCharacteristic->notify();
+            delay(10);
+            pCharacteristic->setValue(lxwp0Sentence.c_str());
+            pCharacteristic->notify();
 #endif
 #ifdef DEBUG_UPDATEPOSITION
-        Serial.printf("Time: %s Distance between aircrafts: %.2f\n\r", timeStr, distancebetweenAircrafts(currentLat, currentLon, acrftLat, acrftLon));
+            Serial.printf("Time: %s Distance between aircrafts: %.2f\n\r", timeStr, distancebetweenAircrafts(currentLat, currentLon, acrftLat, acrftLon));
 #endif
-       
+        }
     }
 }
 
@@ -314,47 +431,43 @@ void updatePosition() {
     currentLat += deltaLat;
     currentLon += deltaLon;
 
-    // #ifdef JOYSTICK
-    // Read joystick values
-    joystickXValue = analogRead(JOYSTICK_X_PIN);
-    joystickYValue = analogRead(JOYSTICK_Y_PIN);
+    // Read joystick values and process if enabled
+    #ifdef JOYSTICK
+    if (joystickEnabled) {
+        joystickXValue = analogReadMilliVolts(JOYSTICK_X_PIN);
+        joystickYValue = analogReadMilliVolts(JOYSTICK_Y_PIN);
 
-   // Normalize joystick values
-    float normalizedX = float(joystickXValue - JOYSTICK_NEUTRAL_X) / float(JOYSTICK_MAX_X - JOYSTICK_MIN_X);
-    float normalizedY = float(joystickYValue - JOYSTICK_NEUTRAL_Y) / float(JOYSTICK_MAX_Y - JOYSTICK_MIN_Y);
+        // Normalize joystick values
+        float normalizedX = float(joystickXValue - JOYSTICK_NEUTRAL_X) / float(JOYSTICK_MAX_X - JOYSTICK_MIN_X);
+        float normalizedY = float(joystickYValue - JOYSTICK_NEUTRAL_Y) / float(JOYSTICK_MAX_Y - JOYSTICK_MIN_Y);
 
-    // Calculate changes based on joystick position
-    float altitudeChange = normalizedX * ALTITUDE_RATE;
-    float headingChange = normalizedY * COURSE_RATE;
+        // Calculate changes based on joystick position
+        altitudeChange = normalizedX * ALTITUDE_RATE;
+        float headingChange = normalizedY * COURSE_RATE;
 
-        // If joystick is in the neutral position for X-axis (Acsend rate), set altitude change to 0
-    if (abs(joystickXValue - JOYSTICK_NEUTRAL_X) < 60) { // 60 is a small threshold for neutral position
+        // If joystick is in the neutral position for X-axis (Ascend rate), set altitude change to 0
+        if (abs(joystickXValue - JOYSTICK_NEUTRAL_X) < 60) { // 60 is a small threshold for neutral position
+            altitudeChange = 0;
+        }
+
+        // If joystick is in the neutral position for Y-axis (Turn rate), set course change to 0
+        if (abs(joystickYValue - JOYSTICK_NEUTRAL_Y) < 15) { // 15 is a small threshold for neutral position
+            headingChange = 0;
+        }
+
+        altitude += altitudeChange;
+        heading += headingChange;
+    } else {
+        // Joystick disabled - zero out the values
+        joystickXValue = 0;
+        joystickYValue = 0;
         altitudeChange = 0;
     }
-
-            // If joystick is in the neutral position for Y-axis (Turn rate), set course change to 0
-    if (abs(joystickYValue - JOYSTICK_NEUTRAL_Y) < 15) { // 15 is a small threshold for neutral position
-        headingChange = 0;
-    }
-
-    altitude += altitudeChange;
-    heading += headingChange;
+    #endif
 
     // Ensure heading is within 0 to 360 degrees
     if (heading >= 360) heading -= 360;
     if (heading < 0) heading += 360;
-
-#ifdef DEBUG_JOYSTICK
-    // Joystick Debug output
-    Serial.print("Joystick X: ");
-    Serial.print(joystickXValue);
-    Serial.print(" Joystick Y: ");
-    Serial.println(joystickYValue);
-    Serial.print(" X Norm: ");
-    Serial.print(normalizedX);
-    Serial.print(" Y Norm: ");
-    Serial.println(normalizedY);
-#endif
 #ifdef DEBUG_UPDATEPOSITION
     Serial.printf("OwnShip : Lat: %f, Lon: %f, Speed: %.0f, Course: %.0f, Altitude: %.1f\n\r", currentLat, currentLon, effectiveSpeed, effectiveCourse, altitude);
     // Serial.println(altitude);
@@ -428,6 +541,99 @@ void updatePositionOther() {
 #endif
 
 }
+
+void startScenario1() {
+    // Set current position to scenario starting point
+    currentLat = scenario1_startLat;
+    currentLon = scenario1_startLon;
+    altitude = scenario1_startAlt;
+
+    // Calculate boundaries (2km x 2km square pattern)
+    float LAT_PER_KM = 1.0 / 111.32;  // degrees per km
+    float LON_PER_KM = 1.0 / (111.32 * cos(radians(scenario1_startLat)));
+
+    scenario1_westEdgeLon = scenario1_startLon;
+    scenario1_eastEdgeLon = scenario1_startLon + (scenario1_legDistanceKm * LON_PER_KM);
+    scenario1_northEdgeLat = scenario1_startLat;
+    scenario1_southEdgeLat = scenario1_startLat - (scenario1_legDistanceKm * LAT_PER_KM);
+
+    // Initialize scenario state
+    scenario1_currentLeg = 0;
+    scenario1_legProgress = 0.0;
+    scenario1_eastward = true;
+    heading = 90; // Start flying east
+    scenarioActive = true;
+    scenarioComplete = false;
+
+    Serial.println("Scenario 1 started");
+}
+
+void stopScenario1() {
+    scenarioActive = false;
+    scenarioComplete = false;
+    scenario1_currentLeg = 0;
+    scenario1_legProgress = 0.0;
+    Serial.println("Scenario 1 stopped");
+}
+
+void updatePositionScenario1() {
+    // Calculate distance traveled this update (no wind in scenario mode)
+    float distance_km = (speed_kmh / 3600.0) * (interval / 1000.0);
+    float headingRad = radians(heading);
+
+    // Simple position update without wind
+    float deltaLat = distance_km * cos(headingRad) / 111.32;
+    float deltaLon = distance_km * sin(headingRad) / (111.32 * cos(radians(currentLat)));
+
+    currentLat += deltaLat;
+    currentLon += deltaLon;
+
+    // Calculate leg progress
+    if (scenario1_eastward) {
+        if (scenario1_eastEdgeLon > scenario1_westEdgeLon) {
+            scenario1_legProgress = (currentLon - scenario1_westEdgeLon) / (scenario1_eastEdgeLon - scenario1_westEdgeLon);
+        }
+    } else {
+        if (scenario1_westEdgeLon < scenario1_eastEdgeLon) {
+            scenario1_legProgress = (scenario1_eastEdgeLon - currentLon) / (scenario1_eastEdgeLon - scenario1_westEdgeLon);
+        }
+    }
+
+    // Clamp progress to valid range
+    scenario1_legProgress = constrain(scenario1_legProgress, 0.0, 1.0);
+
+    // Check if leg is complete and turn around
+    float LAT_PER_KM = 1.0 / 111.32;
+    float STEP_SOUTH_LAT = 0.050 * LAT_PER_KM; // 50 meters
+
+    if (scenario1_eastward) {
+        if (currentLon >= scenario1_eastEdgeLon) {
+            // Reached east edge - turn to west
+            heading = 270;
+            scenario1_eastward = false;
+            currentLat -= STEP_SOUTH_LAT;
+            scenario1_currentLeg++;
+            scenario1_legProgress = 0.0;
+        }
+    } else {
+        if (currentLon <= scenario1_westEdgeLon) {
+            // Reached west edge - turn to east
+            heading = 90;
+            scenario1_eastward = true;
+            currentLat -= STEP_SOUTH_LAT;
+            scenario1_currentLeg++;
+            scenario1_legProgress = 0.0;
+        }
+    }
+
+    // Check if entire pattern is complete
+    if (currentLat <= scenario1_southEdgeLat) {
+        scenarioComplete = true;
+        scenarioActive = false;
+        Serial.println("Scenario 1 complete");
+    }
+}
+
 float distancebetweenacrfts(float lat1, float lon1, float lat2, float lon2) {
     float R = 6371; // Radius of the Earth in kilometers
     float dLat = radians(lat2 - lat1); // Difference in latitude in radians
@@ -455,7 +661,7 @@ String generateGPGGASentence(float lat, float lon, float alt, const char* timeSt
              timeStr, lat_deg, lat_min, lat_dir, lon_deg, lon_min, lon_dir, alt);
 
     String sentence = String(nmea);
-    sentence += "*" + calculateChecksum(sentence);
+    sentence += "*" + calculateChecksum(sentence) + "\r\n";
     return sentence;
 }
 
@@ -481,7 +687,7 @@ String generateGNRMCSentence(float lat, float lon, float speed, float currentCou
              timeStr, lat_deg, lat_min, lat_dir, lon_deg, lon_min, lon_dir, speed_knots, course, dateStr);
 
     String sentence = String(nmea);
-    sentence += "*" + calculateChecksum(sentence);
+    sentence += "*" + calculateChecksum(sentence) + "\r\n";
     return sentence;
 }
 
@@ -508,7 +714,7 @@ String generateLXWP0sentence(float altitude, float altitudeChange, int heading, 
              altitude, altitudeChange, heading, windDirection, windStrength);
 
     String sentence = String(nmea);
-    sentence += "*" + calculateChecksum(sentence);
+    sentence += "*" + calculateChecksum(sentence) + "\r\n";
     return sentence;
 
 }
